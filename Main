@@ -1,0 +1,815 @@
+from asyncio.windows_events import NULL
+from itertools import count
+from turtle import pos, position
+import mysql.connector as mariadb
+from flask import Flask, render_template, request, redirect, url_for, session 
+import math
+import os
+import re
+import smtplib
+from datetime import datetime
+
+from email.mime.image import MIMEImage
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
+import time
+from numpy import trunc
+from reportlab.lib.enums import TA_JUSTIFY
+from reportlab.lib.pagesizes import letter, inch
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+
+mariadb_connection = mariadb.connect(host="localhost", user="root", passwd="system", database="enrollment_db_fn", buffered = True)
+
+app = Flask(__name__)
+
+app.secret_key = 'DSO34BTProject'
+
+# ____________________________________________________________________________
+# TABLE OF CONTENTS
+# 1. SMTP (Gmail) CONFIGURATION CODE
+# 2. CODE FOR LOGGING INTO SYSTEM http://localhost:5000/systemDSO34BT/
+# 3. CODE FOR LOGGING OUT OF SYSTEM http://localhost:5000/systemDSO34BT/logout
+
+
+# ____________________________________________________________________________
+# SMTP (Gmail) CONFIGURATION CODE
+
+# This FUNCTION will use the SMTP Python library to send emails to users based on the 
+# changes made to their information.
+
+# Current issues:
+# 1. Note that if you are going to use this module for your code, you MUST do and have the following for it to work:
+# - Have an active Gmail account, which you must enable to let you send emails from an application.
+# - Enter your gmail information down below
+# - You can then reference the function whenever you need to send an email.
+
+def smtp_emailSend(emailto, email_text):
+
+    gmail_user = 'youremailhere'
+    gmail_password = 'emailpassword'
+
+    sent_from = gmail_user
+
+    #Send request
+    try:
+        server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
+        server.ehlo()
+        server.login(gmail_user, gmail_password)
+        server.sendmail(sent_from, emailto, email_text)
+        server.close()
+
+        return 'Email sent!'
+    except Exception as e:
+        return e
+
+gmail_user = 'youremailhere'
+gmail_password = 'emailpasswordhere'
+
+
+# ____________________________________________________________________________
+# CODE FOR LOGGING INTO SYSTEM http://localhost:5000/systemDSO34BT/
+
+# This part of the code OUGHT to take inputs from the login page, check them against existing database entries
+# and take appropriate action. It will use the GET and POST requests of the Flask framework.
+# UPDATE: The code will now also include lines to manipulate the SMTP Python library so that we can send emails to
+# customers once they register or make a change to their profile. See the end of the function.
+
+# Current issues:
+# 1. Remove administrator code and checkbox on login form (removed on backend)
+# 2. 
+
+
+app.config["DEBUG"] = True
+@app.route('/systemDSO34BT/', methods=['GET', 'POST'])
+def login():
+    #Output error message
+    msg = ''
+# Check if "username" and "password" POST requests exist (user submitted form)
+    if request.method == 'POST' and 'user_id' in request.form and 'user_password' in request.form:
+    # Create variables for easy access
+        user_id = request.form['user_id']
+        user_password = request.form['user_password']
+
+        cursor = mariadb_connection.cursor()
+        if 'checkboxAdm' in request.form:
+            cursor.execute('SELECT * FROM admin WHERE adm_id = %s AND adm_Password = %s', (user_id, user_password))
+            administrator = cursor.fetchone()
+
+            if administrator:
+                session['loggedin'] = True
+                session['u_id'] = administrator[0]
+                session['u_name'] = administrator[1]
+                session['u_email'] = administrator[3]
+                session['sch_id'] = administrator[4]
+                # return the admin Home page here
+                return redirect(url_for('admin_Dash'))
+            else:
+                msg = "Incorrect administrator details. Try again." 
+        else:
+            cursor.execute('SELECT * FROM user WHERE u_id = %s AND u_password = %s', (user_id, user_password,))
+            #Fetch one record and return result
+            reg_user = cursor.fetchone()
+
+            # If a registered user exists in the user table in our database then...
+            if reg_user:
+            # Create session data, we can access this data in other routes
+                session['loggedin'] = True
+                session['u_id'] = reg_user[0]
+                session['u_name'] = reg_user[1]
+                session['u_email'] = reg_user[2]
+                session['u_telno'] = reg_user[3]
+                # Redirect to home page
+                return redirect(url_for('home'))
+            else:
+                # Account doesnt exist or username/password incorrect
+                msg = 'Incorrect username/password!'
+    return render_template('index.html', msg =msg)
+
+
+# ____________________________________________________________________________
+# CODE FOR LOGGING OUT OF SYSTEM http://localhost:5000/systemDSO34BT/logout
+
+# This part of the code will log a user out of the system.
+
+# Current issues:
+# 1. N/A, just connect to all pages under log out link.
+# 2. 
+
+@app.route('/systemDSO34BT/logout')
+def logout():
+
+   # Remove session data, this will log the user out
+   session.pop('loggedin', None)
+   session.pop('u_id', None)
+   session.pop('u_name', None)
+   
+   # Redirect to login page
+   return redirect(url_for('login'))
+
+
+# ____________________________________________________________________________
+# CODE FOR REGISTERING INTO SYSTEM http://localhost:5000/systemDSO34BT/register
+
+# This part of the code OUGHT to take inputs from the registration page, check them against existing database entries
+# and take appropriate action. It will use the GET and POST requests of the Flask framework.
+
+# Current issues:
+# 1. None
+# 2. 
+
+@app.route('/systemDSO34BT/register', methods=['GET', 'POST'])
+def register():
+
+    # Output message if something goes wrong...
+    msg = ''
+    # Check if "username", "name, "password" and "email" POST requests exist (user submitted form)
+    if request.method == 'POST' and 'u_id' in request.form and 'u_name' in request.form and 'u_email' in request.form and 'u_telno' in request.form and 'u_password' in request.form and 'confirmPassword' in request.form:
+       
+        # Create variables for easy access
+        u_id = request.form['u_id']
+        u_name = request.form['u_name']
+        u_email = request.form['u_email']
+        u_telno = request.form['u_telno']
+        u_password = request.form['u_password']
+        confirmPassword = request.form['confirmPassword']
+        
+        # Check if account exists using MySQL        
+        cursor = mariadb_connection.cursor()
+        cursor.execute('SELECT * FROM user WHERE u_id = %s', (u_id,))
+        account = cursor.fetchone() 
+
+        # If account exists show error and validation checks
+        if account:
+            msg = 'Account already exists!'
+        elif not re.match(r'[^@]+@[^@]+\.[^@]+', u_email):
+            msg = 'Invalid email address!'
+        elif not re.match(r'[0-9]+', u_id):
+            msg = 'ID number must contain only numbers!'
+        elif not re.match(r'[A-Za-z]+', u_name):
+            msg = 'Error: Name can contain only characters. Try again.'
+        elif not u_id or not u_password or not u_email or not u_name:
+            msg = 'Please fill out the form!'
+        elif u_password != confirmPassword:
+            msg = "Oops, the passwords don't match. Try again."
+        else:
+            # Account doesnt exists and the form data is valid, now insert new account into accounts table
+            cursor.execute('INSERT INTO user VALUES (%s, %s, %s, %s, %s)', (u_id, u_name, u_email, u_telno, u_password,))
+            mariadb_connection.commit()
+            msg = "You have successfully registered! Go back to the login page."
+    elif request.method == 'POST':
+        # Form is empty... (no POST data)
+        msg = 'Please fill out the form!'
+    # Show registration form with message (if any)
+    return render_template('register.html', msg=msg)
+    
+
+# ____________________________________________________________________________
+# CODE FOR REGISTERING INTO SYSTEM FOR ADMINS http://localhost:5000/systemDSO34BT/adm_Reg
+
+# This part of the code OUGHT to take inputs from the registration page, check them against existing database entries
+# and take appropriate action. It will use the GET and POST requests of the Flask framework.
+
+# Current issues:
+# 1. None
+# 2. 
+
+@app.route('/systemDSO34BT/admin_Reg', methods=['GET', 'POST'])
+def admin_Reg():
+
+    # Output message if something goes wrong...
+    msg = ''
+    # Check if "username", "name, "password" and "email" POST requests exist (user submitted form)
+    if request.method == 'POST' and 'sch_id' in request.form and 'adm_id' in request.form and 'adm_name' in request.form and 'adm_email' in request.form and 'adm_telno' in request.form and 'adm_password' in request.form and 'confirmPassword' in request.form:
+       
+        # Create variables for easy access
+        adm_id = request.form['adm_id']
+        adm_name = request.form['adm_name']
+        adm_email = request.form['adm_email']
+        adm_telno = request.form['adm_telno']
+        adm_password = request.form['adm_password']
+        confirmPassword = request.form['confirmPassword']
+        sch_id = request.form['sch_id']
+        
+        # Check if account exists using MySQL        
+        cursor = mariadb_connection.cursor()
+        cursor.execute('SELECT * FROM admin WHERE adm_id = %s', (adm_id,))
+        account = cursor.fetchone() 
+
+        # cursor2 = mariadb_connection.cursor()
+        # cursor2.execute("SELECT * FROM school WHERE s_id = %s", (sch_id,))
+        # school = cursor.fetchone()
+
+        # If account exists show error and validation checks
+        if account:
+            msg = 'Account already exists!'
+        #elif not school:
+        #    msg = 'Oops, that school doesn\'t exist on our system. Try again.'
+        elif not re.match(r'[^@]+@[^@]+\.[^@]+', adm_email):
+            msg = 'Invalid email address!'
+        elif not re.match(r'[0-9]+', adm_id):
+            msg = 'ID number must contain only numbers!'
+        elif not re.match(r'[A-Za-z]+', adm_name):
+            msg = 'Error: Name can contain only characters. Try again.'
+        elif not adm_id or not adm_password or not adm_email or not adm_name:
+            msg = 'Please fill out the form!'
+        elif adm_password != confirmPassword:
+            msg = "Oops, the passwords don't match. Try again."
+        else:
+            # Account doesnt exists and the form data is valid, now insert new account into accounts table
+            cursor.execute('INSERT INTO admin VALUES (%s, %s, %s, %s, %s, %s)', (adm_id, adm_name, adm_telno, adm_email, sch_id, adm_password,))
+            mariadb_connection.commit()
+            msg = "You have successfully registered! Go back to the login page."
+    elif request.method == 'POST':
+        # Form is empty... (no POST data)
+        msg = 'Please fill out the form!'
+    # Show registration form with message (if any)
+    return render_template('admin_Reg.html', msg=msg)
+    
+
+
+# ____________________________________________________________________________
+# CODE FOR SYSTEM HOMEPAGE http://localhost:5000/systemDSO34BT/home
+
+# This part of the code manages information based on what is displayed on the home page.
+
+# Current issues:
+# 1. Missing home page LOL
+# 2. 
+
+@app.route('/systemDSO34BT/home/')
+def home():
+    # Check if user is loggedin
+    if 'loggedin' in session:
+        # User is loggedin show them the home page
+        return render_template('dashboard.html', name=session['u_name'])
+    # User is not loggedin redirect to login page
+    return redirect(url_for('login'))
+
+
+# ____________________________________________________________________________
+# CODE FOR SYSTEM HOMEPAGE FOR ADMINS http://localhost:5000/systemDSO34BT/admin_Dash
+
+# This part of the code manages information based on what is displayed on the home page.
+
+# Current issues:
+# 1. Missing home page LOL
+# 2. 
+
+@app.route('/systemDSO34BT/admin_Dash/')
+def admin_Dash():
+    # Check if user is loggedin
+    if 'loggedin' in session:
+        # User is loggedin show them the home page
+        return render_template('admin_Dash.html', name=session['u_name'])
+    # User is not loggedin redirect to login page
+    return redirect(url_for('login'))
+    
+
+# ____________________________________________________________________________
+# CODE FOR VIEWING/EDITING PROFILE http://localhost:5000/systemDSO34BT/profile
+
+# This part of the code will let users view and edit their profile in accordance with
+# the appropriate database tables. It will use the GET and POST requests of the Flask framework.
+
+# Current issues:
+# 1. Add edit profile section
+# 2. 
+
+@app.route('/systemDSO34BT/profile', methods=['GET', 'POST'])
+def profile():
+    if 'loggedin' in session:
+        # Output message here for errors
+        msg = ''
+                # Check if "registration", "carmake", "bookdate" and "time" POST requests exist (user submitted form)
+        if request.method == 'POST' and 'u_name' in request.form and 'u_email' in request.form and 'u_telno' in request.form and 'u_password' in request.form:
+            # Create variables
+            u_name = request.form['u_name']
+            u_telno = request.form['u_telno']
+            u_email = request.form['u_email']
+            u_password = request.form['u_password']
+                    
+            cursor = mariadb_connection.cursor()
+
+            if not u_name:
+                u_name = session['u_name']
+            elif not u_telno:
+                u_telno = session['u_telno']
+            elif not u_email:
+                u_email = session['u_email']
+            elif not u_password:
+                u_password = session['u_password']
+            else:
+                # Booking doesn't exist and the form data is valid, now insert new booking and vehicle into table
+                cursor.execute("UPDATE user SET u_name = %s, u_telno = %s, u_email = %s, u_password = %s WHERE u_id = %s", (u_name, u_telno, u_email, u_password, session['u_id']))
+                mariadb_connection.commit()
+                msg = 'Your profile has been edited.'
+
+                # code to update information in editing box
+                
+                cursor.execute('SELECT * FROM user WHERE u_id = %s', (session['u_id'],))
+                #Fetch one record and return result
+                reg_user = cursor.fetchone()
+                
+                session['u_name'] = reg_user[1]
+                session['u_email'] = reg_user[2]
+                session['u_telno'] = reg_user[3]
+
+        elif request.method == 'POST':
+            # Form is empty... (no POST data)
+            msg = 'Please fill out this form!'
+        # Show registration form with message (if any)
+        return render_template('profile.html', msg=msg, u_id=session['u_id'], u_telno=session['u_telno'], u_name=session['u_name'], u_email=session['u_email'])
+       # User is not loggedin redirect to login page
+        
+    return redirect(url_for('login'))   
+
+   
+
+# ____________________________________________________________________________
+# CODE FOR VIEWING/EDITING PROFILE FOR ADMINS http://localhost:5000/systemDSO34BT/admin_profile
+
+# This part of the code will let users view and edit their profile in accordance with
+# the appropriate database tables. It will use the GET and POST requests of the Flask framework.
+
+# Current issues:
+# 1. Add edit profile section
+# 2. 
+
+@app.route('/systemDSO34BT/admin_profile', methods=['GET', 'POST'])
+def admin_profile():
+    if 'loggedin' in session:
+        # Output message here for errors
+        msg = ''
+                # Check if "registration", "carmake", "bookdate" and "time" POST requests exist (user submitted form)
+        if request.method == 'POST' and 'u_name' in request.form and 'u_email' in request.form and 'u_telno' in request.form and 'u_password' in request.form:
+            # Create variables
+            u_name = request.form['u_name']
+            u_telno = request.form['u_telno']
+            u_email = request.form['u_email']
+            u_password = request.form['u_password']
+                    
+            cursor = mariadb_connection.cursor()
+
+            if not u_name:
+                u_name = session['u_name']
+            elif not u_telno:
+                u_telno = session['u_telno']
+            elif not u_email:
+                u_email = session['u_email']
+            elif not u_password:
+                u_password = session['u_password']
+            else:
+                # Booking doesn't exist and the form data is valid, now insert new booking and vehicle into table
+                cursor.execute("UPDATE admin SET adm_name = %s, adm_telno = %s, adm_email = %s, adm_password = %s WHERE adm_id = %s", (u_name, u_telno, u_email, u_password, session['u_id']))
+                mariadb_connection.commit()
+                msg = 'Your profile has been edited.'
+
+                # code to update information in editing box
+                
+                cursor.execute('SELECT * FROM admin WHERE adm_id = %s', (session['u_id'],))
+                #Fetch one record and return result
+                reg_user = cursor.fetchone()
+                
+                session['u_name'] = reg_user[1]
+                session['u_email'] = reg_user[3]
+                session['u_telno'] = reg_user[2]
+
+        elif request.method == 'POST':
+            # Form is empty... (no POST data)
+            msg = 'Please fill out this form!'
+        # Show registration form with message (if any)
+        return render_template('admin_Profile.html', msg=msg, u_id=session['u_id'], u_telno=session['u_telno'], u_name=session['u_name'], u_email=session['u_email'])
+       # User is not loggedin redirect to login page
+        
+    return redirect(url_for('login'))   
+
+
+
+# ____________________________________________________________________________
+# CODE FOR ENROLLING A STUDENT http://localhost:5000/systemDSO34BT/enrol/
+
+# This part of the code OUGHT to take inputs from the booking page and commit them to the vehicle and appointment
+# tables, if they don't already exist. It will also use the GET and POST requests of the Flask framework.
+
+# Current issues:
+# 1. Code cannot get information from input boxes
+#    RESOLVED - In the HTML, you need to specify the name attribute to the input tags.
+# 2. Update how to get information from services box
+# 3. Update tables to hold types of information
+
+
+@app.route('/systemDSO34BT/enrol/', methods=['GET', 'POST'])
+def enrol():
+    if 'loggedin' in session:
+        # Output message here for errors
+        msg = ''
+        # Check if "registration", "carmake", "bookdate" and "time" POST requests exist (user submitted form)
+        if request.method == 'POST' and 'a_idno' in request.form and 'a_fname' in request.form and 'a_lname' in request.form and 'a_homeAddress' in request.form and 'a_InstrMedium' in request.form and 'a_Age' in request.form:
+            # Create variables
+            a_idno = request.form['a_idno']
+            a_fname = request.form['a_fname']
+            a_lname = request.form['a_lname']
+            a_homeAddrss = request.form['a_homeAddress']
+            a_InstrMedium = request.form['a_InstrMedium']
+            a_Age = request.form['a_Age']
+            a_Race = request.form['a_Race']
+            a_Disability = request.form['a_Disability']
+            a_Nationality = request.form['a_Nationality']
+            a_Gender = request.form['a_Gender']
+            a_Grade = request.form['a_Grade']
+            a_Tel = request.form['a_Tel']
+            a_Price = request.form['a_Price']
+            a_Quintile = request.form['a_Quintile']
+            a_Type = request.form['a_Type']
+            a_PreviousGrade = request.form['a_PreviousGrade']
+            a_Phase = request.form['a_Phase']
+            
+
+            id_CopyChild = request.files['idCopyChild']
+            id_CopyAdult = request.files['idCopyAdult']
+            copyPreviousReport = request.files['copyPreviousReport']
+
+            if id_CopyChild.filename != '':
+                id_CopyChild.save(id_CopyChild.filename)
+
+            if id_CopyAdult.filename != '':
+                id_CopyAdult.save(id_CopyAdult.filename)
+
+            if copyPreviousReport.filename != '':
+                copyPreviousReport.save(copyPreviousReport.filename)
+
+            app.config['MAX_CONTENT_LENGTH'] = 2048 * 2048
+
+            # Additional processing       
+
+            # Processing phase
+            if a_Phase == "Primary":
+                a_Phase = "PRIMAR"
+            elif a_Phase == "Intermediate":
+                a_Phase = "INTERM"
+            else: 
+                a_Phase = "SENIOR"
+
+            cursor = mariadb_connection.cursor()
+ 
+            cursor.execute('SELECT * FROM applicant WHERE a_idno = "%s"', (a_idno, ))
+            record = cursor.fetchone()
+ 
+            # If record exists show error and validation checks
+            if record:
+                msg = 'A student with that information already exists. Please check your profile details for more information.'
+            elif not a_idno or not a_Age or not a_Disability or not a_fname or not a_Gender or not a_Grade or not a_fname or not a_homeAddrss or not a_InstrMedium or not a_Nationality or not a_Race:
+                msg = 'Please fill out the form!'
+            else:
+                # Booking doesn't exist and the form data is valid, now insert new booking and vehicle into table
+                #    cursor.execute('INSERT INTO applicant VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, %s, %s) ', (a_idno, a_fname, a_lname, a_homeAddrss, a_InstrMedium, a_Age, a_Race, a_Disability, a_Nationality, a_Gender, a_Grade, a_Tel, a_PreviousGrade, a_Quintile, a_Price, a_Type, session['u_id'], a_Phase, ))
+                #    mariadb_connection.commit()
+                # Commit information from applicant for session
+                #   session['a_idno'] = a_idno   
+                #    msg = 'You have successfully sent your application in for enrolment. Please check the status page for updates. You will also receive an email with this update.'
+                # You can add a module here to send an email to the user.
+   
+                
+                # Extra processing necessary for the next page:
+        
+        
+                # No need to check if applicant exists, checked in previous function
+                # Need to validate that user chose 3 subjects
+
+                 
+                session['a_idno'] = a_idno
+                session['a_fname'] = a_fname
+                session['a_lname'] = a_lname
+                session['a_homeaddress'] = a_homeAddrss
+                session['a_instrMedium'] = a_InstrMedium
+                session['a_age'] = a_Age
+                session['a_race'] = a_Race
+                session['a_disability'] = a_Disability
+                session['a_nationality'] = a_Nationality
+                session['a_gender'] = a_Gender
+                session['a_grade'] = a_Grade
+                session['a_tel'] = a_Tel
+                session['a_price'] = a_Price
+                session['a_quintile'] = a_Quintile
+                session['a_type'] = a_Type
+                session['a_previousgrade'] = a_PreviousGrade
+                session['a_phase'] = a_Phase
+
+                if (int(a_Grade) > 9):
+                    return redirect(url_for('enrol2'))
+                else:
+                    return redirect(url_for('enrol3'))
+                
+                # a_idno, a_Age, a_Disability, a_fname, a_Gender, a_Grade, a_homeAddrss, a_InstrMedium, a_lname, a_Nationality, a_Type, a_Tel, a_Phase, a_PreviousGrade, a_Quintile, a_Price
+      
+        elif request.method == 'POST':
+            # Form is empty... (no POST data)
+            msg = 'Please fill out this form!'
+        # Show registration form with message (if any)
+        return render_template('enrol.html', msg=msg, )
+    # User is not loggedin redirect to login page
+    return redirect(url_for('login'))   
+
+# ____________________________________________________________________________
+# CODE FOR ENROLLING A STUDENT http://localhost:5000/systemDSO34BT/enrol-2/
+
+# This part of the code OUGHT to take inputs from the booking page and commit them to the vehicle and appointment
+# tables, if they don't already exist. It will also use the GET and POST requests of the Flask framework.
+
+# Current issues:
+# 1. Code cannot get information from input boxes
+#    RESOLVED - In the HTML, you need to specify the name attribute to the input tags.
+# 2. Update how to get information from services box
+# 3. Update tables to hold types of information
+
+
+@app.route('/systemDSO34BT/enrol2/', methods=['GET', 'POST'])
+def enrol2():
+    if 'loggedin' in session:
+
+        msg = ''
+        
+        if session['a_price'][4] == " ":
+            maxPrice = session['a_price'][8:]
+            minPrice = session['a_price'][0:3]
+        else:
+            maxPrice = session['a_price'][9:]
+            minPrice = session['a_price'][0:4]
+
+        # Direct match
+        cursorSchools = mariadb_connection.cursor()
+        cursorSchools.execute("SELECT DISTINCT CONCAT(s.s_id, ' ',s.s_name), s.s_quintile FROM school s, school_phase p WHERE s.s_id = p.sch_id AND ph_id = %s AND s.s_Quintile = %s OR s.s_Price BETWEEN %s AND %s;", (session['a_phase'], session['a_quintile'], minPrice, maxPrice))
+        schoolsData = cursorSchools.fetchall()
+
+        # Generate information for the subject edits:
+        cursorSubject = mariadb_connection.cursor()
+        cursorSubject.execute("SELECT CONCAT(sb_code, ' ',sb_name) FROM subject WHERE sb_code NOT IN ('AAC004', 'EMS009', 'AFE003','AFH002','EFA012','EHL011','LIO016','MLI018','MTS019','NSC020','SCC022','TEC024') ")
+        subjectData = cursorSubject.fetchall()
+
+        # Information regarding student displayed in the info box:
+        stuName = session['a_fname']
+        stuSurname = session['a_lname']
+        stuID = session['a_idno']
+        stuPhase = session['a_phase']
+        stuAge = session['a_age']
+        stuGrade = session['a_grade']
+
+        if request.method == 'POST' and 'a_SchoolName' in request.form and 'a_homeLang' in request.form and 'a_FAL' in request.form: 
+            # Get information from previous page:
+           
+            # Set variables for information retrieved from enrol 2 page
+            a_schoolName = request.form['a_SchoolName']
+            a_MathSubj = request.form['a_MathSubj'][0:3]
+            a_homeLang = request.form['a_homeLang'][0:3]
+            a_FAL = request.form['a_FAL'][0:3]
+            a_subj1 = request.form['subj1'][0:3]
+            a_subj2 = request.form['subj2'][0:3]
+            a_subj3 = request.form['subj3'][0:3]
+
+            # There is no need to check the inputs for incorrect information since it's handled by select edits.
+                
+            # Generate schools for the first a_schoolName edit:
+
+            # Commit information to database:
+            # Send applicant information to database:
+            cursor = mariadb_connection.cursor()
+                
+            # Commit all subjects to database, if student is Grades lower than those expected to choose remove option and subscribe subjects for their age
+
+            # if int(session['a_grade'])  > 4:
+            #     cursor.execute('INSERT INTO app_subject VALUES (%s, "AAC004")',  (session['a_idno']),)
+            #     cursor.execute('INSERT INTO app_subject VALUES (%s, "AFE003")', (session['a_idno']),)
+            #     cursor.execute('INSERT INTO app_subject VALUES (%s, "EHL011")', (session['a_idno']))
+            #     cursor.execute('INSERT INTO app_subject VALUES (%s, "MTS019")', (session['a_idno']))
+            #     mariadb_connection.commit()
+            # elif int(session['a_grade']) > 3 and int(session['a_grade']) < 8:
+            #     cursor.execute('INSERT INTO app_subject VALUES (%s, "AAC004")',  (session['a_idno']))
+            #     cursor.execute('INSERT INTO app_subject VALUES (%s, "AFE003")', (session['a_idno']))
+            #     cursor.execute('INSERT INTO app_subject VALUES (%s, "EHL011")', (session['a_idno']))
+            #     cursor.execute('INSERT INTO app_subject VALUES (%s, "MTS019")', (session['a_idno']))
+            #     cursor.execute('INSERT INTO app_subject VALUES (%s, "NSC020")', (session['a_idno']))
+            #     cursor.execute('INSERT INTO app_subject VALUES (%s, "SSC022")', (session['a_idno']))
+            #     cursor.execute('INSERT INTO app_subject VALUES (%s, "TEC024")', (session['a_idno']))
+            #     mariadb_connection.commit()
+            # elif int(session['a_grade']) > 7:
+            #     cursor.execute('INSERT INTO app_subject VALUES (%s, "MTS019")', (session['a_idno']))
+            #     cursor.execute('INSERT INTO app_subject VALUES (%s, "EHL011")', (session['a_idno']))
+            #     cursor.execute('INSERT INTO app_subject VALUES (%s, "AFE003")', (session['a_idno']))
+            #     cursor.execute('INSERT INTO app_subject VALUES (%s, %s)', (session['a_idno'], a_subj1[0:5]))
+            #     cursor.execute('INSERT INTO app_subject VALUES (%s, %s)', (session['a_idno'], a_subj2[0:5]))
+            #     cursor.execute('INSERT INTO app_subject VALUES (%s, %s)', (session['a_idno'], a_subj3[0:5]))
+            #     mariadb_connection.commit()
+
+            cursor.execute('INSERT INTO applicant VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "CURB01", %s, %s) ', (session['a_idno'], session['a_fname'], session['a_lname'], session['a_homeaddress'], session['a_instrMedium'], session['a_age'], session['a_race'], session['a_disability'], session['a_nationality'], session['a_gender'], session['a_grade'], session['a_tel'], session['a_previousgrade'], session['a_quintile'], session['a_price'], session['a_type'],
+            session['u_id'], session['a_phase'], ))
+            mariadb_connection.commit()
+                
+            # Output message here for errors
+            msg = 'Your child is successfully enrolled! You can go to the enrol page to download a confirmation letter.'
+            schoolsMsg = ''
+        else:
+            # Form is empty... (no POST data)
+            msg = 'Please fill out this form!'
+        return render_template('enrol2.html', outputSchoolsData=schoolsData , stuGrade=stuGrade, stuName=stuName, stuSurname=stuSurname, stuPhase=stuPhase, stuID=stuID, stuAge=stuAge, msg=msg, outputSubjectData=subjectData)
+    # User is not loggedin redirect to login page
+    return redirect(url_for('login'))   
+
+
+# ____________________________________________________________________________
+# CODE FOR ENROLLING A STUDENT http://localhost:5000/systemDSO34BT/enrol-2/
+
+# This part of the code OUGHT to take inputs from the booking page and commit them to the vehicle and appointment
+# tables, if they don't already exist. It will also use the GET and POST requests of the Flask framework.
+
+# Current issues:
+# 1. Code cannot get information from input boxes
+#    RESOLVED - In the HTML, you need to specify the name attribute to the input tags.
+# 2. Update how to get information from services box
+# 3. Update tables to hold types of information
+
+
+@app.route('/systemDSO34BT/enrol3/', methods=['GET', 'POST'])
+def enrol3():
+    if 'loggedin' in session:
+
+        msg = ''
+        
+        if session['a_price'][4] == " ":
+            maxPrice = session['a_price'][8:]
+            minPrice = session['a_price'][0:3]
+        else:
+            maxPrice = session['a_price'][9:]
+            minPrice = session['a_price'][0:4]
+
+        # Direct match
+        cursorSchools = mariadb_connection.cursor()
+        cursorSchools.execute("SELECT DISTINCT CONCAT('DIRECT MATCH - ',s.s_id, ' ',s.s_name), s.s_quintile FROM school s, school_phase p WHERE s.s_Quintile = %s AND s.s_id = p.sch_id AND ph_id = %s AND s.s_Price BETWEEN %s AND %s;", (session['a_quintile'], session['a_phase'], minPrice, maxPrice))
+        schoolsData = cursorSchools.fetchall()
+
+        # Generate information for the subject edits:
+        cursorSubject = mariadb_connection.cursor()
+        cursorSubject.execute("SELECT CONCAT(sb_code, ' ',sb_name) FROM subject WHERE sb_code NOT IN ('AAC004', 'EMS009', 'AFE003','AFH002','EFA012','EHL011','LIO016','MLI018','MTS019','NSC020','SCC022','TEC024') ")
+        subjectData = cursorSubject.fetchall()
+
+        # Information regarding student displayed in the info box:
+        stuName = session['a_fname']
+        stuSurname = session['a_lname']
+        stuID = session['a_idno']
+        stuPhase = session['a_phase']
+        stuAge = session['a_age']
+        stuGrade = session['a_grade']
+
+        if request.method == 'POST' and 'a_SchoolName' in request.form:   
+            # Commit all subjects to database, if student is Grades lower than those expected to choose remove option and subscribe subjects for their age
+
+            # if int(session['a_grade'])  > 4:
+            #     cursor.execute('INSERT INTO app_subject VALUES (%s, "AAC004")',  (session['a_idno']),)
+            #     cursor.execute('INSERT INTO app_subject VALUES (%s, "AFE003")', (session['a_idno']),)
+            #     cursor.execute('INSERT INTO app_subject VALUES (%s, "EHL011")', (session['a_idno']))
+            #     cursor.execute('INSERT INTO app_subject VALUES (%s, "MTS019")', (session['a_idno']))
+            #     mariadb_connection.commit()
+            # elif int(session['a_grade']) > 3 and int(session['a_grade']) < 8:
+            #     cursor.execute('INSERT INTO app_subject VALUES (%s, "AAC004")',  (session['a_idno']))
+            #     cursor.execute('INSERT INTO app_subject VALUES (%s, "AFE003")', (session['a_idno']))
+            #     cursor.execute('INSERT INTO app_subject VALUES (%s, "EHL011")', (session['a_idno']))
+            #     cursor.execute('INSERT INTO app_subject VALUES (%s, "MTS019")', (session['a_idno']))
+            #     cursor.execute('INSERT INTO app_subject VALUES (%s, "NSC020")', (session['a_idno']))
+            #     cursor.execute('INSERT INTO app_subject VALUES (%s, "SSC022")', (session['a_idno']))
+            #     cursor.execute('INSERT INTO app_subject VALUES (%s, "TEC024")', (session['a_idno']))
+            #     mariadb_connection.commit()
+
+            cursor.execute('INSERT INTO applicant VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "CURB01", %s, %s) ', (session['a_idno'], session['a_fname'], session['a_lname'], session['a_homeaddress'], session['a_instrMedium'], session['a_age'], session['a_race'], session['a_disability'], session['a_nationality'], session['a_gender'], session['a_grade'], session['a_tel'], session['a_previousgrade'], session['a_quintile'], session['a_price'], session['a_type'],
+            session['u_id'], session['a_phase'], ))
+            mariadb_connection.commit()
+                
+            # Output message here for errors
+            msg = 'Your child is successfully enrolled! You can go to the enrol page to download a confirmation letter.'
+            schoolsMsg = ''
+        else:
+            # Form is empty... (no POST data)
+            msg = 'Please fill out this form!'
+        return render_template('enrol3.html', outputSchoolsData=schoolsData , stuGrade=stuGrade, stuName=stuName, stuSurname=stuSurname, stuPhase=stuPhase, stuID=stuID, stuAge=stuAge, msg=msg, outputSubjectData=subjectData)
+    # User is not loggedin redirect to login page
+    return redirect(url_for('login'))   
+
+# ____________________________________________________________________________
+# CODE FOR ENROLLING A STUDENT http://localhost:5000/systemDSO34BT/enrol-2/
+
+# This part of the code OUGHT to take inputs from the booking page and commit them to the vehicle and appointment
+# tables, if they don't already exist. It will also use the GET and POST requests of the Flask framework.
+
+# Current issues:
+# 1. Code cannot get information from input boxes
+#    RESOLVED - In the HTML, you need to specify the name attribute to the input tags.
+# 2. Update how to get information from services box
+# 3. Update tables to hold types of information
+
+
+@app.route('/systemDSO34BT/check/', methods=['GET', 'POST'])
+def check():
+    if 'loggedin' in session:
+        # Send userNo to webpage
+
+        userNo = session['u_id']
+        # Step 1: Take the user ID number in session and find all students registered under them.
+
+        
+        cursorApplicants = mariadb_connection.cursor()
+        cursorApplicants.execute('SELECT A.a_fnames, A.a_idno, S.s_name, A.a_grade, S.s_name FROM applicant a, school s WHERE A.school_id = S.s_id AND user_id = %s', (userNo,))
+
+        countstudents = mariadb_connection.cursor()
+        countstudents.execute('SELECT COUNT(a_idno) FROM applicant WHERE user_id like %s', (userNo,))
+        countrows = countstudents.fetchone()
+        rows = countrows[0] + 1
+        applicantData = cursorApplicants.fetchall()
+
+        # Output message here for errors
+        msg = ''
+        schoolsMsg = ''
+
+        if request.method == "POST" and applicantData:
+
+            now = datetime.now()
+            current_time = now.strftime("%H%M%S")
+                  
+            doc = SimpleDocTemplate("tableApplicants%s.pdf" % current_time,
+            pagesize =letter)
+            # container for the 'Flowable objects
+            elements =[]
+
+            logo = "logo.png"
+            formatted_time = time.ctime()
+            im = Image(logo, 2*inch, 2*inch)
+            elements.append(im)
+            styles=getSampleStyleSheet()
+            styles.add(ParagraphStyle(name='Justify', alignment=TA_JUSTIFY))
+            ptext = '<font size="12">%s</font>' % formatted_time
+            elements.append(Paragraph(ptext, styles["Normal"]))
+            elements.append(Spacer(1, 12))
+        
+            tableHeadings = [['Names', 'ID Number', 'School', 'Grade', 'Status' ]]
+            t=Table(tableHeadings + applicantData, 5*[1.65*inch], rows*[0.4*inch])
+                #t.setStyle(TableStyle([('ALIGN', (1,1), (-2,-2), 'RIGHT'),
+                # ('TEXTCOLOR', (1,1), (-2,-2), colors.black),
+                # ]))
+
+            elements.append(t)
+            doc.build(elements) 
+
+        elif request.method == "POST":
+            msg = "You cannot download an empty report."
+
+                
+        return render_template('check.html', msg=msg, outputApplicantData=applicantData, userNo=userNo)
+    # User is not loggedin redirect to login page
+    return redirect(url_for('login'))   
+
+
+# ____________________________________________________________________________
+
+# Run the app
+app.run()    
